@@ -1,52 +1,63 @@
-CREATE OR REPLACE FUNCTION register_user_on_activity(in_user_id bigint, in_activity_id bigint) RETURNS registration AS $$
-    DECLARE
-        res_registration registration%rowtype;
+CREATE OR REPLACE FUNCTION register_user_on_activity(idUser bigint, idActivity bigint) RETURNS registration AS $$
+	DECLARE
+		r registration%rowtype;
+	BEGIN
+		SELECT * INTO r FROM registration 
+		WHERE user_id = idUser
+		AND activity_id = idActivity;
+		 
+		IF FOUND THEN
+			RAISE EXCEPTION 'registration_already_exists';     
+		END IF;
+		INSERT INTO registration (id, registration_date, user_id, activity_id)
+			                      values (nextval('id_generator'), now(), idUser, idActivity);
+		SELECT * INTO r FROM registration
+		WHERE user_id = idUser
+		AND activity_id = idActivity;
+		RETURN r;
+	END;
+$$ LANGUAGE plpgsql;
 
-    BEGIN
-        SELECT * INTO res_registration FROM registration WHERE user_id = in_user_id AND activity_id = in_activity_id;
-        IF FOUND THEN
-            RAISE EXCEPTION 'registration_already_exists';
-        END IF;
+DROP TRIGGER IF EXISTS log_insert_registration on registration;
+CREATE OR REPLACE FUNCTION log_insert_registration() RETURNS TRIGGER AS $$
+	BEGIN
+		INSERT INTO action_log (id,action_name, entity_name, entity_id, author, action_date)
+		    values (nextval('id_generator'),'insert','registration', NEW.id, user,now()); 
+		RETURN NULL;
+	END;
+$$ LANGUAGE plpgsql;
 
-        INSERT INTO registration (id, user_id, activity_id)
-        VALUES(nextval('id_generator'), in_user_id, in_activity_id);
+CREATE TRIGGER log_insert_registration
+    AFTER INSERT ON registration
+    FOR EACH ROW EXECUTE PROCEDURE log_insert_registration();
 
-        SELECT * INTO res_registration FROM registration WHERE user_id = in_user_id AND activity_id = in_activity_id;
-        RETURN res_registration;
-    END
-$$ LANGUAGE PLPGSQL;
+CREATE OR REPLACE FUNCTION unregister_user_on_activity(idUser bigint, idActivity bigint) RETURNS void AS $$
+	DECLARE
+		rr registration%rowtype;
+	BEGIN
+		SELECT * INTO rr FROM registration
+		WHERE user_id = idUser
+		AND activity_id = idActivity;
+		
+		IF NOT FOUND THEN
+			RAISE EXCEPTION 'registration_not_found';
+		END IF;
+		
+		DELETE FROM registration
+		WHERE user_id = idUser
+		AND activity_id = idActivity;
+	END;
+$$ LANGUAGE plpgsql;
+    
+DROP TRIGGER IF EXISTS log_delete_registration on registration;
+CREATE OR REPLACE FUNCTION log_delete_registration() RETURNS TRIGGER AS $$
+	BEGIN
+		INSERT INTO action_log (id,action_name, entity_name, entity_id, author, action_date)
+		    values (nextval('id_generator'),'delete','registration', OLD.id, user,now()); 
+		RETURN NULL;
+	END;
+$$ LANGUAGE plpgsql;
 
-
-CREATE OR REPLACE FUNCTION unregister_user_on_activity(in_user_id bigint, in_activity_id bigint) RETURNS void AS $$
-    DECLARE
-        res_registration registration%rowtype;
-
-    BEGIN
-        SELECT * INTO res_registration FROM registration WHERE user_id = in_user_id AND activity_id = in_activity_id;
-        IF NOT FOUND THEN
-            RAISE EXCEPTION 'registration_not_found';
-        END IF;
-
-        DELETE FROM registration WHERE user_id = in_user_id AND activity_id = in_activity_id;
-
-    END
-$$ LANGUAGE PLPGSQL;
-
-DROP TRIGGER IF EXISTS action_log ON registration;
-
-CREATE OR REPLACE FUNCTION action_log() RETURNS TRIGGER AS $action_log$
-BEGIN 
-	IF (TG_OP = 'INSERT') THEN
-   	 	INSERT INTO action_log VALUES(nextval('id_generator'), 'insert', 'registration', NEW.id, user, now());
-    ELSE
-    	INSERT INTO action_log SELECT nextval('id_generator'), 'delete', TG_TABLE_NAME, OLD.id, user, now();
-    END IF;
-    RETURN NULL; -- le résultat est ignoré car il s'agit d'un trigger AFTER
-
-END;
-$action_log$ language plpgsql;
-
-
-CREATE TRIGGER action_log
-    AFTER DELETE OR INSERT ON registration
-    FOR EACH ROW EXECUTE PROCEDURE action_log();
+CREATE TRIGGER log_delete_registration
+    AFTER DELETE ON registration
+    FOR EACH ROW EXECUTE PROCEDURE log_delete_registration();
